@@ -1,42 +1,49 @@
-import streamlit as st
 import datetime
-import pandas as pd
-import numpy as np
 import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scipy.optimize as opt
+import streamlit as st
 import yfinance as yf
-from scipy.optimize import minimize
 from sklearn.covariance import LedoitWolf
-
-
-st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
-st.title("Mean-Variance Portfolio Optimizer")
 
 # ---------------------------------------------
 # Helper functions
 # ---------------------------------------------
+
+
 def compute_portfolio_stats(weights, mu, cov):
     ret = np.dot(weights, mu)
     vol = np.sqrt(np.dot(weights.T, cov).dot(weights))
     return ret, vol
 
+
 def mean_variance_objective(weights, mu, cov, lam):
     ret, vol = compute_portfolio_stats(weights, mu, cov)
-    return -(ret - lam * vol)  # maximize return - lambda*risk, flipped since scipy minimize is used
+    # maximize return - lambda*risk, flipped since scipy minimize is used
+    return -(ret - lam * vol)
+
 
 def max_mu_objective(weights, mu, cov, lam):
     ret, _ = compute_portfolio_stats(weights, mu, cov)
     return -ret
 
+
 def vol_constraint_factory(Sigma, target_vol):
     def cons_fun(w):
         var = float(w.dot(Sigma).dot(w))
-        return target_vol**2 - var  # require var <= target_vol^2 -> cons_fun(w) >= 0
+        # require var <= target_vol^2 -> cons_fun(w) >= 0
+        return target_vol**2 - var
     return cons_fun
+
 
 OBJECTIVES = {
     'Mean-Variance': mean_variance_objective,
     'Target Vol': max_mu_objective,
 }
+
 
 @st.cache_data
 def safe_download(tickers, **kwargs):
@@ -46,8 +53,6 @@ def safe_download(tickers, **kwargs):
         except Exception as e:
             time.sleep(0.5)
 
-import numpy as np
-import scipy.optimize as opt
 
 def min_variance_for_target_return(mu, Sigma, target_return):
     n = len(mu)
@@ -81,6 +86,7 @@ def min_variance_for_target_return(mu, Sigma, target_return):
     var_opt = portfolio_variance(w_opt)
     return w_opt, var_opt
 
+
 def efficient_frontier(mu, Sigma, num_points=40):
     mu_min, mu_max = mu.min(), mu.max()
     target_returns = np.linspace(mu_min, mu_max, num_points)
@@ -102,6 +108,7 @@ def efficient_frontier(mu, Sigma, num_points=40):
 
     return np.array(vols), np.array(rets), np.array(weights), target_returns
 
+
 def return_at_target_vol(target_vol, vols, rets):
     # Requires vols sorted
     order = np.argsort(vols)
@@ -110,7 +117,15 @@ def return_at_target_vol(target_vol, vols, rets):
     return np.interp(target_vol, vols_sorted, rets_sorted)
 
 
-tab_data, tab_results, tab_frontier = st.tabs(["Inputs", "Optimization Results", "Efficient Frontier"])
+# ---------------------------------------------
+# Report
+# ---------------------------------------------
+
+st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
+st.title("Mean-Variance Portfolio Optimizer")
+
+tab_data, tab_results, tab_frontier = st.tabs(
+    ["Inputs", "Optimization Results", "Efficient Frontier"])
 
 with tab_data:
     st.header("Asset List")
@@ -158,16 +173,19 @@ with tab_data:
     st.divider()
     st.subheader("Estimate Returns & Covariance")
 
-    start_date, end_date = st.date_input('Date Range', (datetime.datetime.now() - datetime.timedelta(365 * 5), datetime.datetime.now()))
+    start_date, end_date = st.date_input('Date Range', (datetime.datetime.now(
+    ) - datetime.timedelta(365 * 5), datetime.datetime.now()))
     freq = st.selectbox("Return frequency", ["Weekly", "Monthly"], index=0)
 
     interval_map = {"Daily": "1d", "Weekly": "1wk", "Monthly": "1mo"}
     interval = interval_map[freq]
 
-    price_df = safe_download(tickers, start=start_date, end=end_date, interval=interval)["Close"]
+    price_df = safe_download(tickers, start=start_date,
+                             end=end_date, interval=interval)["Close"]
 
     if price_df.empty:
-        st.sidebar.error("Price fetch returned no data — check tickers or try again later.")
+        st.sidebar.error(
+            "Price fetch returned no data — check tickers or try again later.")
     else:
         # align dataframe
         price_df = price_df.reindex(tickers, axis=1)
@@ -193,7 +211,8 @@ with tab_data:
             ann_factor = 12
 
         mu_est = returns.mean() * ann_factor
-        Sigma_est = LedoitWolf().fit(returns).covariance_ * ann_factor  # returns.cov() * ann_factor
+        Sigma_est = LedoitWolf().fit(returns).covariance_ * \
+            ann_factor  # returns.cov() * ann_factor
 
         sigma_est = pd.Series(np.sqrt(np.diag(Sigma_est)), index=tickers)
         Dinv = np.diag(1 / np.sqrt(np.diag(Sigma_est)))
@@ -202,13 +221,15 @@ with tab_data:
         st.write("**Estimated Expected Returns (μ):**")
         mu_df = st.data_editor(
             pd.DataFrame({"Return": mu_est, "Stdev": sigma_est}),
-            column_config={k: st.column_config.NumberColumn(k, format='percent') for k in ['Return', 'Stdev']},
+            column_config={k: st.column_config.NumberColumn(
+                k, format='percent') for k in ['Return', 'Stdev']},
         )
 
         st.write("**Estimated Correlations (ρ):**")
         rho_df = st.data_editor(
             pd.DataFrame(rho_est, index=tickers, columns=tickers),
-            column_config={tick: st.column_config.NumberColumn(tick, format='percent') for tick in tickers}
+            column_config={tick: st.column_config.NumberColumn(
+                tick, format='percent') for tick in tickers}
         )
 
         mu = mu_df['Return'].astype(float).values
@@ -219,7 +240,8 @@ with tab_data:
         st.divider()
 
         st.write('**Sample Rolling Correlations:**')
-        window = st.slider("Rolling correlation window (weeklies only)", 12, 104, 26)
+        window = st.slider(
+            "Rolling correlation window (weeklies only)", 12, 104, 26)
         target = st.selectbox("Choose asset for rolling correlation", tickers)
         compare_assets = st.multiselect(
             "Compare target asset with:",
@@ -255,10 +277,11 @@ with tab_results:
         cons = {"type": "eq", "fun": lambda w: np.sum(w) - 1}
         obj_fn = OBJECTIVES[obj_name]
         if obj_name == 'Target Vol':
-            cons = (cons, {'type': 'ineq', 'fun': vol_constraint_factory(Sigma, target_vol)})
+            cons = (cons, {'type': 'ineq',
+                    'fun': vol_constraint_factory(Sigma, target_vol)})
 
-        res = minimize(obj_fn, x0, args=(mu, Sigma, lam),
-                       bounds=bounds, constraints=cons)
+        res = opt.minimize(obj_fn, x0, args=(mu, Sigma, lam),
+                           bounds=bounds, constraints=cons)
 
         if res.success:
             w_opt = res.x
@@ -299,17 +322,15 @@ with tab_results:
 
 with tab_frontier:
     st.header("Efficient Frontier")
-    selected_assets = st.multiselect("Select assets to plot", tickers, default=tickers[:2])
+    selected_assets = st.multiselect(
+        "Select assets to plot", tickers, default=tickers[:2])
     run_frontier = st.button('Calculate Frontier')
-    
-    if run_frontier:
-        import streamlit as st
-        import matplotlib.pyplot as plt
-        import pandas as pd
 
+    if run_frontier:
         col1, col2 = st.columns(2)
 
-        vols, rets, all_weights, target_returns = efficient_frontier(mu, Sigma, num_points=60)
+        vols, rets, all_weights, target_returns = efficient_frontier(
+            mu, Sigma, num_points=60)
 
         with col1:
             fig1, ax1 = plt.subplots()
